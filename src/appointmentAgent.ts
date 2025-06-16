@@ -8,6 +8,10 @@ function getCalendarClient(): calendar_v3.Calendar {
   const credentialsJSON = process.env.GOOGLE_CREDENTIALS
     ? JSON.parse(process.env.GOOGLE_CREDENTIALS)
     : undefined;
+  
+  if (!credentialsJSON) {
+    throw new Error("Missing or invalid GOOGLE_CREDENTIALS");
+  }
 
   const auth = new JWT({
     email: credentialsJSON?.client_email,
@@ -23,6 +27,9 @@ export async function getAvailability(
   durationMinutes = 30,
   timeZone = 'Europe/Madrid'
 ): Promise<{ start: string; end: string }[]> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error('Invalid date format. Use "YYYY-MM-DD".');
+  }
   const calendar = getCalendarClient();
   const calendarId = process.env.PRIMARY_CALENDAR_ID ?? 'primary';
 
