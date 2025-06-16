@@ -1,6 +1,7 @@
 import { google, calendar_v3 } from 'googleapis';
 import { JWT } from 'google-auth-library';
 import 'dotenv/config';
+import { format } from 'date-fns';  
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar'];
 
@@ -22,12 +23,20 @@ const stripOffset = (dt: string) => dt.replace(/([+-]\\d{2}:\\d{2}|Z)$/u, '');
 /* ─────────────────────────── availability ────────────────────── */
 
 export async function getAvailability(
-  date: string,
+  rawDate: string,
   durationMinutes = 30,
   timeZone = 'Europe/Madrid'
 ): Promise<{ start: string; end: string }[]> {
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) {
-    throw new Error('Invalid date format. Use “YYYY-MM-DD”.');
+  // 1. normaliza
+  let date = rawDate?.trim();
+  const isoRe = /^\\d{4}-\\d{2}-\\d{2}$/;
+
+  if (!isoRe.test(date)) {
+    const parsed = new Date(date);
+    if (isNaN(parsed.getTime())) {
+      throw new Error('Invalid date. Use words como “hoy/mañana” o un formato de fecha válido.');
+    }
+    date = format(parsed, 'yyyy-MM-dd');      // ← “2025-06-20”
   }
 
   const calendar   = getCalendarClient();
