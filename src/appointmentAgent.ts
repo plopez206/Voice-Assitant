@@ -4,33 +4,33 @@ import 'dotenv/config';
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar'];
 
-function getCalendarClient(): calendar_v3.Calendar {
-  const credentialsJSON = process.env.GOOGLE_CREDENTIALS
-    ? JSON.parse(process.env.GOOGLE_CREDENTIALS)
-    : undefined;
-  
-  if (!credentialsJSON) {
-    throw new Error("Missing or invalid GOOGLE_CREDENTIALS");
-  }
+/* ─────────────────────────── helpers ─────────────────────────── */
 
-  const auth = new JWT({
-    email: credentialsJSON?.client_email,
-    key: credentialsJSON?.private_key,
-    scopes: SCOPES,
-  });
+function getCalendarClient(): calendar_v3.Calendar {
+  const raw = process.env.GOOGLE_CREDENTIALS;
+  if (!raw) throw new Error('Missing GOOGLE_CREDENTIALS');
+
+  const { client_email, private_key } = JSON.parse(raw);
+  const auth = new JWT({ email: client_email, key: private_key, scopes: SCOPES });
 
   return google.calendar({ version: 'v3', auth });
 }
+
+/** remove “Z” or “±HH:MM” so Calendar treats string as local */
+const stripOffset = (dt: string) => dt.replace(/([+-]\\d{2}:\\d{2}|Z)$/u, '');
+
+/* ─────────────────────────── availability ────────────────────── */
 
 export async function getAvailability(
   date: string,
   durationMinutes = 30,
   timeZone = 'Europe/Madrid'
 ): Promise<{ start: string; end: string }[]> {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    throw new Error('Invalid date format. Use "YYYY-MM-DD".');
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) {
+    throw new Error('Invalid date format. Use “YYYY-MM-DD”.');
   }
-  const calendar = getCalendarClient();
+
+  const calendar   = getCalendarClient();
   const calendarId = process.env.PRIMARY_CALENDAR_ID ?? 'primary';
 
   const timeMin = new Date(`${date}T00:00:00`).toISOString();
@@ -45,45 +45,52 @@ export async function getAvailability(
 
   const workStart = new Date(`${date}T09:00:00`).getTime();
   const workEnd   = new Date(`${date}T18:00:00`).getTime();
-  const slot = durationMinutes * 60 * 1000;
+  const slotMs    = durationMinutes * 60 * 1000;
   const free: { start: string; end: string }[] = [];
 
-  for (let t = workStart; t + slot <= workEnd; t += slot) {
-    const slotStart = t;
-    const slotEnd   = t + slot;
+  for (let t = workStart; t + slotMs <= workEnd; t += slotMs) {
     const overlaps = busy.some(({ start, end }) => {
-      const bStart = new Date(start).getTime();
-      const bEnd   = new Date(end).getTime();
-      return slotStart < bEnd && slotEnd > bStart;
+      const bStart = Date.parse(start);
+      const bEnd   = Date.parse(end);
+      return t < bEnd && t + slotMs > bStart;
     });
+
     if (!overlaps) {
       free.push({
-        start: new Date(slotStart).toISOString(),
-        end:   new Date(slotEnd).toISOString(),
+        start: new Date(t).toISOString(),
+        end:   new Date(t + slotMs).toISOString(),
       });
     }
   }
   return free;
 }
 
+/* ─────────────────────────── booking ─────────────────────────── */
+
 export async function bookAppointment(args: {
   name: string;
   phone?: string;
-  start: string;
-  end: string;
+  start: string;  // expect “YYYY-MM-DDTHH:MM[:SS][±HH:MM|Z]”
+  end:   string;
   description?: string;
 }): Promise<calendar_v3.Schema$Event> {
-  const calendar = getCalendarClient();
+  const calendar   = getCalendarClient();
   const calendarId = process.env.PRIMARY_CALENDAR_ID ?? 'primary';
+
+  // Calendar API: usa dateTime local + timeZone O  dateTime+offset. Elegimos lo 1º.
+  const startLocal = stripOffset(args.start);
+  const endLocal   = stripOffset(args.end);
 
   const event = await calendar.events.insert({
     calendarId,
     requestBody: {
-      summary: `Cita – ${args.name}`,
-      description: args.description ?? '',
-      start: { dateTime: args.start, timeZone: 'Europe/Madrid' },
-      end:   { dateTime: args.end,   timeZone: 'Europe/Madrid' },
-      attendees: args.phone ? [{ displayName: args.name, email: `${args.phone}@example.invalid` }] : undefined,
+      summary:       `Cita – ${args.name}`,
+      description:   args.description ?? '',
+      start: { dateTime: startLocal, timeZone: 'Europe/Madrid' },
+      end:   { dateTime: endLocal,   timeZone: 'Europe/Madrid' },
+      attendees: args.phone
+        ? [{ displayName: args.name, email: `${args.phone}@example.invalid` }]
+        : undefined,
     },
   });
 
