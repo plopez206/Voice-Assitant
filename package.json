@@ -1,7 +1,19 @@
 {
+  "name": "al-norte-call-assistant",
+  "version": "1.0.0",
+  "license": "MIT",
   "scripts": {
-    "dev": "nodemon --exec ts-node src/index.ts"
+    "dev": "nodemon --exec ts-node src/index.ts", 
+    "build": "tsc -p .",                            
+    "start": "node dist/index.js"
   },
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "google-auth-library": "^10.1.0",
+    "googleapis": "^150.0.1"
+  },
+
   "devDependencies": {
     "@types/express": "^5.0.3",
     "@types/node": "^24.0.1",
@@ -9,10 +21,7 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3"
   },
-  "dependencies": {
-    "dotenv": "^16.5.0",
-    "express": "^5.1.0",
-    "google-auth-library": "^10.1.0",
-    "googleapis": "^150.0.1"
+  "engines": {
+    "node": ">=18"
   }
 }
