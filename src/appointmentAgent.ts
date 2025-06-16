@@ -1,13 +1,13 @@
 import { google, calendar_v3 } from 'googleapis';
 import { JWT } from 'google-auth-library';
+import { format } from 'date-fns';
 import 'dotenv/config';
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar'];
-const TZ      = 'Europe/Madrid';
-const ISO_RE  = /^\\d{4}-\\d{2}-\\d{2}$/;   // YYYY-MM-DD
+const TZ     = 'Europe/Madrid';
+const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;          // YYYY-MM-DD
 
-/* ─── Google Calendar auth ─────────────────────────────────────── */
-
+/* ───────────── Google Calendar auth ────────────── */
 function getCalendar(): calendar_v3.Calendar {
   const raw = process.env.GOOGLE_CREDENTIALS;
   if (!raw) throw new Error('Missing GOOGLE_CREDENTIALS');
@@ -18,13 +18,23 @@ function getCalendar(): calendar_v3.Calendar {
   return google.calendar({ version: 'v3', auth });
 }
 
-/* ─── Availability ─────────────────────────────────────────────── */
+/* ───────────── helper: normaliza fecha ─────────── */
+function toISODate(raw: string): string {
+  const trimmed = raw.trim();
+  if (ISO_RE.test(trimmed)) return trimmed;               // ya es ISO
+  const parsed = new Date(trimmed);
+  if (isNaN(parsed.valueOf())) {
+    throw new Error('Invalid date. Provide YYYY-MM-DD or a valid date string.');
+  }
+  return format(parsed, 'yyyy-MM-dd');                    // normaliza
+}
 
+/* ───────────── availability ─────────────────────── */
 export async function getAvailability(
-  date: string,
+  rawDate: string,
   durationMinutes = 30
 ): Promise<{ start: string; end: string }[]> {
-  if (!ISO_RE.test(date)) throw new Error('Date must be YYYY-MM-DD');
+  const date = toISODate(rawDate);                        // ← usa helper
 
   const calendar   = getCalendar();
   const calendarId = process.env.PRIMARY_CALENDAR_ID ?? 'primary';
@@ -38,37 +48,35 @@ export async function getAvailability(
 
   const busy = (data.calendars?.[calendarId].busy ?? []) as { start: string; end: string }[];
 
-  const workStart = Date.parse(`${date}T09:00:00Z`);
-  const workEnd   = Date.parse(`${date}T18:00:00Z`);
-  const slotMs    = durationMinutes * 60_000;
+  const dayStart = Date.parse(`${date}T09:00:00Z`);
+  const dayEnd   = Date.parse(`${date}T18:00:00Z`);
+  const slotMs   = durationMinutes * 60_000;
   const free: { start: string; end: string }[] = [];
 
-  for (let t = workStart; t + slotMs <= workEnd; t += slotMs) {
+  for (let t = dayStart; t + slotMs <= dayEnd; t += slotMs) {
     const overlaps = busy.some(({ start, end }) => t < Date.parse(end) && t + slotMs > Date.parse(start));
     if (!overlaps) free.push({ start: new Date(t).toISOString(), end: new Date(t + slotMs).toISOString() });
   }
   return free;
 }
 
-/* ─── Booking ──────────────────────────────────────────────────── */
-
+/* ───────────── booking ─────────────────────────── */
 export async function bookAppointment(args: {
   name: string;
   phone?: string;
-  date: string; // YYYY-MM-DD
-  time: string; // HH:MM 24 h
+  date: string;  // YYYY-MM-DD or parseable
+  time: string;  // HH:MM (24 h)
   description?: string;
 }): Promise<calendar_v3.Schema$Event> {
-  if (!ISO_RE.test(args.date)) throw new Error('Date must be YYYY-MM-DD');
-  if (!/^\\d{2}:\\d{2}$/.test(args.time)) throw new Error('Time must be HH:MM');
+  const date = toISODate(args.date);
+  if (!/^\d{2}:\d{2}$/.test(args.time)) throw new Error('Time must be HH:MM (24 h)');
 
   const calendar   = getCalendar();
   const calendarId = process.env.PRIMARY_CALENDAR_ID ?? 'primary';
 
-  const startLocal = `${args.date}T${args.time}:00`;
-  const endLocal   = `${args.date}T${args.time}:00`; // dummy—real end 30 min after
+  const startLocal = `${date}T${args.time}:00`;
   const endISO     = new Date(Date.parse(startLocal) + 30 * 60_000)
-                       .toISOString().replace('Z', ''); // strip Z to stay local
+                       .toISOString().replace('Z', ''); // mismo offset local
 
   return (
     await calendar.events.insert({
